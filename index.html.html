@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>영업 타겟리스트 지도</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg: #F5F6F4;
+    --ink: #14213D;
+    --ink-soft: #2B3A5C;
+    --sidebar-text: #E8EAED;
+    --sidebar-text-dim: #9AA5C0;
+    --accent: #0F766E;
+    --accent-soft: #CFE9E6;
+    --border: #E1E3DD;
+    --status-none: #64748B;
+    --status-progress: #D97706;
+    --status-done: #059669;
+    --status-hold: #9F1239;
+    --radius: 10px;
+  }
+  *{ box-sizing: border-box; }
+  html, body{ margin:0; padding:0; height:100%; font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+  #app{ display:flex; height:100vh; width:100vw; overflow:hidden; }
+
+  /* Sidebar */
+  #sidebar{ width: 340px; min-width: 340px; background: var(--ink); color: var(--sidebar-text); display:flex; flex-direction:column; z-index: 500; }
+  #sidebar header{ padding: 20px 18px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  #sidebar h1{ font-size: 17px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.2px; }
+  #sidebar .sub{ font-size: 12.5px; color: var(--sidebar-text-dim); line-height:1.5; }
+
+  #filters{ display:flex; flex-wrap:wrap; gap:6px; padding: 12px 18px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .chip{ border:1px solid rgba(255,255,255,0.16); background: transparent; color: var(--sidebar-text); padding: 5px 10px; border-radius: 100px; font-size: 12.5px; cursor:pointer; display:flex; align-items:center; gap:6px; transition: all .15s ease; }
+  .chip:hover{ background: rgba(255,255,255,0.08); }
+  .chip.active{ background: var(--accent); border-color: var(--accent); }
+  .dot{ width:8px; height:8px; border-radius:50%; display:inline-block; }
+
+  #uploadWrap{ padding: 12px 18px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  #uploadBtn{ width:100%; padding: 9px 0; border-radius: 8px; border: 1px dashed rgba(255,255,255,0.28); background: rgba(255,255,255,0.05); color: var(--sidebar-text); font-size: 12.5px; cursor:pointer; font-family: inherit; }
+  #uploadBtn:hover{ background: rgba(255,255,255,0.1); }
+  #uploadHelp{ font-size: 11px; color: var(--sidebar-text-dim); margin-top: 6px; line-height:1.5; }
+
+  #searchWrap{ padding: 10px 18px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  #searchInput{ width:100%; padding: 9px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: #fff; font-size: 13px; outline:none; }
+  #searchInput::placeholder{ color: var(--sidebar-text-dim); }
+  #searchInput:focus{ border-color: var(--accent); }
+
+  #list{ flex:1; overflow-y:auto; padding: 8px 10px 12px; }
+  .item{ background: rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius: var(--radius); padding: 11px 12px; margin-bottom: 8px; cursor:pointer; transition: background .15s ease; }
+  .item:hover{ background: rgba(255,255,255,0.09); }
+  .item-top{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .item-name{ font-size: 13.5px; font-weight: 600; line-height:1.35; }
+  .item-addr{ font-size: 12px; color: var(--sidebar-text-dim); margin-top: 3px; line-height:1.4; }
+  .badge{ font-size: 11px; padding: 2px 8px; border-radius: 100px; white-space:nowrap; font-weight:600; color:#fff; flex-shrink:0; }
+
+  #emptyState{ padding: 30px 18px; color: var(--sidebar-text-dim); font-size: 13px; line-height:1.7; text-align:center; }
+
+  #legend{ padding: 12px 18px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 11.5px; color: var(--sidebar-text-dim); }
+  #legend .row{ display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+
+  /* Map */
+  #mapContainer{ flex:1; position:relative; }
+  #map{ height:100%; width:100%; }
+  #hint{ position:absolute; top:14px; left:50%; transform:translateX(-50%); background: rgba(20,33,61,0.92); color:#fff; padding: 8px 16px; border-radius: 100px; font-size: 12.5px; z-index: 999; pointer-events:none; box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
+
+  /* Popup form */
+  .leaflet-popup-content-wrapper{ border-radius: 12px; }
+  .pform{ min-width: 220px; font-size: 13px; }
+  .pform label{ display:block; font-size: 11.5px; color: #667085; margin: 8px 0 3px; font-weight:600; }
+  .pform input, .pform select{ width:100%; padding: 7px 9px; border-radius: 7px; border:1px solid var(--border); font-size: 13px; font-family: inherit; }
+  .pform .row{ display:flex; gap:8px; margin-top: 12px; }
+  .pform button{ flex:1; padding: 8px 0; border-radius: 7px; border:none; font-size: 12.5px; font-weight:600; cursor:pointer; }
+  .btn-save{ background: var(--accent); color:#fff; }
+  .btn-delete{ background: #FEE2E2; color:#B91C1C; }
+  .btn-cancel{ background: #F1F2F0; color: var(--ink); }
+
+  .pin-svg{ display:block; }
+
+  #toast{ position:absolute; bottom:18px; left:50%; transform: translateX(-50%); background: var(--ink); color:#fff; padding: 9px 18px; border-radius: 100px; font-size: 12.5px; opacity:0; pointer-events:none; transition: opacity .25s ease; z-index: 999; }
+  #toast.show{ opacity:1; }
+
+  #progressOverlay{ position:absolute; inset:0; background: rgba(20,33,61,0.55); display:none; align-items:center; justify-content:center; z-index: 1200; }
+  #progressOverlay.show{ display:flex; }
+  #progressCard{ background:#fff; border-radius: 14px; padding: 22px 26px; width: 300px; text-align:center; box-shadow: 0 12px 30px rgba(0,0,0,0.25); }
+  #progressCard .title{ font-size: 13.5px; font-weight:700; margin-bottom: 10px; }
+  #progressTrack{ background: var(--border); border-radius: 100px; height: 8px; overflow:hidden; margin-bottom: 8px; }
+  #progressFill{ background: var(--accent); height:100%; width:0%; transition: width .2s ease; }
+  #progressLabel{ font-size: 11.5px; color:#667085; }
+
+  #failedPanel{ border-top: 1px solid rgba(255,255,255,0.08); padding: 12px 18px; max-height: 34%; overflow-y:auto; }
+  #failedPanel h3{ font-size: 12px; margin: 0 0 6px; color: #FCA5A5; }
+  #failedPanel .fitem{ background: rgba(255,255,255,0.05); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 12px; }
+  #failedPanel .fitem .fname{ font-weight:600; margin-bottom:2px; }
+  #failedPanel .fitem .faddr{ color: var(--sidebar-text-dim); margin-bottom: 6px; }
+  #failedPanel .fitem button{ font-size: 11px; padding: 4px 8px; border-radius: 6px; border:none; background: var(--accent); color:#fff; cursor:pointer; }
+  #placeHint{ position:absolute; top:14px; left:50%; transform:translateX(-50%); background: #B45309; color:#fff; padding: 8px 16px; border-radius: 100px; font-size: 12.5px; z-index: 1000; display:none; box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
+  #placeHint.show{ display:block; }
+
+  @media (max-width: 720px){
+    #sidebar{ width: 100%; min-width: 0; position:absolute; bottom:0; left:0; height: 46%; border-radius: 16px 16px 0 0; box-shadow: 0 -6px 24px rgba(0,0,0,0.18); }
+    #mapContainer{ position:absolute; inset:0; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <header>
+      <h1>영업 타겟리스트 지도</h1>
+      <div class="sub">지도를 클릭해 타겟을 등록하세요. 이 목록은 팀 전체에 공유됩니다.</div>
+    </header>
+    <div id="uploadWrap">
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" />
+      <button id="uploadBtn">📄 엑셀 업로드 (상호 · 주소 · 상태)</button>
+      <div id="uploadHelp">첫 행은 헤더로 인식해요. "상호/업체명", "주소", "상태" 열을 찾아 자동으로 등록합니다.</div>
+    </div>
+    <div id="filters"></div>
+    <div id="searchWrap">
+      <input id="searchInput" type="text" placeholder="상호 또는 주소 검색" />
+    </div>
+    <div id="list"></div>
+    <div id="failedPanel" style="display:none;"></div>
+    <div id="legend">
+      <div class="row"><span class="dot" style="background:var(--status-none)"></span> 미접촉</div>
+      <div class="row"><span class="dot" style="background:var(--status-progress)"></span> 접촉중</div>
+      <div class="row"><span class="dot" style="background:var(--status-done)"></span> 계약</div>
+      <div class="row"><span class="dot" style="background:var(--status-hold)"></span> 보류</div>
+    </div>
+  </div>
+  <div id="mapContainer">
+    <div id="map"></div>
+    <div id="hint">지도를 클릭하면 새 타겟을 등록할 수 있어요</div>
+    <div id="placeHint">실패한 주소의 위치를 지도에서 클릭해 지정해주세요</div>
+    <div id="toast"></div>
+    <div id="progressOverlay">
+      <div id="progressCard">
+        <div class="title">주소를 지도에 배치하는 중... (이 탭을 닫지 마세요)</div>
+        <div id="progressTrack"><div id="progressFill"></div></div>
+        <div id="progressLabel">0 / 0</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const STATUS = {
+  none:     { label: '미접촉', color: 'var(--status-none)',     hex: '#64748B' },
+  progress: { label: '접촉중', color: 'var(--status-progress)', hex: '#D97706' },
+  done:     { label: '계약',   color: 'var(--status-done)',     hex: '#059669' },
+  hold:     { label: '보류',   color: 'var(--status-hold)',     hex: '#9F1239' },
+};
+const STORAGE_URL = 'https://script.google.com/macros/s/AKfycbyFn8qfbOjvPMLGivOuk1cXzp8X4JUwO4L_eYIb52I7tX1tY97mHUZPQoI3casOlFE/exec';
+
+let targets = [];
+let markers = {};
+let activeFilter = 'all';
+let searchTerm = '';
+let tempMarker = null;
+
+async function loadTargets(){
+  try{
+    const res = await fetch(STORAGE_URL);
+    const data = await res.json();
+    targets = Array.isArray(data) ? data.map(t => ({
+      id: String(t.id), name: t.name || '', address: t.address || '',
+      status: STATUS[t.status] ? t.status : 'none',
+      lat: parseFloat(t.lat), lng: parseFloat(t.lng)
+    })).filter(t => !isNaN(t.lat) && !isNaN(t.lng)) : [];
+  }catch(e){
+    targets = [];
+  }
+  renderAll();
+}
+
+let saveQueue = Promise.resolve();
+
+function saveTargets(){
+  saveQueue = saveQueue.then(() => doActualSave());
+  return saveQueue;
+}
+
+async function doActualSave(){
+  try{
+    await fetch(STORAGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(targets)
+    });
+  }catch(e){
+    showToast('저장에 실패했어요. 다시 시도해주세요.');
+  }
+}
+
+const map = L.map('map', { zoomControl: true }).setView([37.5360, 127.2165], 10);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Tiles &copy; Esri',
+  maxZoom: 19
+}).addTo(map);
+
+function pinIcon(statusKey, dashed){
+  const hex = STATUS[statusKey] ? STATUS[statusKey].hex : '#64748B';
+  const dash = dashed ? 'stroke-dasharray="3,2"' : '';
+  const html = `
+    <svg class="pin-svg" width="30" height="42" viewBox="0 0 30 42" xmlns="http://www.w3.org/2000/svg">
+      <path d="M15 0C6.7 0 0 6.7 0 15c0 10.5 15 27 15 27s15-16.5 15-27C30 6.7 23.3 0 15 0z"
+            fill="${hex}" stroke="#ffffff" stroke-width="1.5" ${dash}/>
+      <circle cx="15" cy="15" r="6" fill="#ffffff"/>
+    </svg>`;
+  return L.divIcon({ html, className: '', iconSize: [30,42], iconAnchor: [15,42], popupAnchor: [0,-38] });
+}
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=> t.classList.remove('show'), 1800);
+}
+
+function statusChipsHtml(){
+  const counts = { all: targets.length };
+  Object.keys(STATUS).forEach(k => counts[k] = targets.filter(t => t.status === k).length);
+  let html = `<button class="chip ${activeFilter==='all'?'active':''}" data-filter="all">전체 ${counts.all}</button>`;
+  Object.keys(STATUS).forEach(k => {
+    html += `<button class="chip ${activeFilter===k?'active':''}" data-filter="${k}">
+      <span class="dot" style="background:${STATUS[k].color}"></span>${STATUS[k].label} ${counts[k]}
+    </button>`;
+  });
+  return html;
+}
+
+function filteredTargets(){
+  return targets.filter(t => {
+    if (activeFilter !== 'all' && t.status !== activeFilter) return false;
+    if (searchTerm){
+      const s = searchTerm.toLowerCase();
+      return (t.name||'').toLowerCase().includes(s) || (t.address||'').toLowerCase().includes(s);
+    }
+    return true;
+  });
+}
+
+function renderList(){
+  const list = document.getElementById('list');
+  const items = filteredTargets();
+  if (targets.length === 0){
+    list.innerHTML = `<div id="emptyState">아직 등록된 타겟이 없어요.<br/>지도를 클릭해서 첫 타겟을 등록해보세요.</div>`;
+    return;
+  }
+  if (items.length === 0){
+    list.innerHTML = `<div id="emptyState">조건에 맞는 타겟이 없어요.</div>`;
+    return;
+  }
+  list.innerHTML = items.map(t => `
+    <div class="item" data-id="${t.id}">
+      <div class="item-top">
+        <div class="item-name">${escapeHtml(t.name || '이름 없음')}</div>
+        <span class="badge" style="background:${STATUS[t.status].hex}">${STATUS[t.status].label}</span>
+      </div>
+      <div class="item-addr">${escapeHtml(t.address || '')}</div>
+    </div>
+  `).join('');
+  list.querySelectorAll('.item').forEach(el => {
+    el.addEventListener('click', () => {
+      const t = targets.find(x => x.id === el.dataset.id);
+      if (t){
+        map.flyTo([t.lat, t.lng], 15, { duration: 0.6 });
+        setTimeout(() => markers[t.id] && markers[t.id].openPopup(), 650);
+      }
+    });
+  });
+}
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function renderMarkers(){
+  Object.values(markers).forEach(m => map.removeLayer(m));
+  markers = {};
+  const items = filteredTargets();
+  items.forEach(t => {
+    const marker = L.marker([t.lat, t.lng], { icon: pinIcon(t.status) }).addTo(map);
+    marker.bindPopup(editFormHtml(t), { closeButton: true });
+    marker.on('popupopen', () => bindEditForm(t.id));
+    markers[t.id] = marker;
+  });
+}
+
+function renderAll(){
+  document.getElementById('filters').innerHTML = statusChipsHtml();
+  document.getElementById('filters').querySelectorAll('.chip').forEach(el => {
+    el.addEventListener('click', () => { activeFilter = el.dataset.filter; renderAll(); });
+  });
+  renderList();
+  renderMarkers();
+}
+
+function addFormHtml(latlng){
+  const options = Object.keys(STATUS).map(k => `<option value="${k}">${STATUS[k].label}</option>`).join('');
+  return `
+    <div class="pform" id="addForm">
+      <label>상호</label>
+      <input type="text" id="newName" placeholder="예: OO치킨 강남점" />
+      <label>주소</label>
+      <input type="text" id="newAddress" placeholder="예: 서울시 강남구 ..." />
+      <label>진행상태</label>
+      <select id="newStatus">${options}</select>
+      <div class="row">
+        <button class="btn-cancel" id="cancelAdd">취소</button>
+        <button class="btn-save" id="confirmAdd">등록</button>
+      </div>
+    </div>`;
+}
+
+function editFormHtml(t){
+  const options = Object.keys(STATUS).map(k => `<option value="${k}" ${t.status===k?'selected':''}>${STATUS[k].label}</option>`).join('');
+  return `
+    <div class="pform" id="editForm">
+      <label>상호</label>
+      <input type="text" id="editName" value="${escapeHtml(t.name||'')}" />
+      <label>주소</label>
+      <input type="text" id="editAddress" value="${escapeHtml(t.address||'')}" />
+      <label>진행상태</label>
+      <select id="editStatus">${options}</select>
+      <div class="row">
+        <button class="btn-delete" id="deleteTarget">삭제</button>
+        <button class="btn-save" id="saveEdit">저장</button>
+      </div>
+    </div>`;
+}
+
+function bindEditForm(id){
+  const saveBtn = document.getElementById('saveEdit');
+  const delBtn = document.getElementById('deleteTarget');
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
+    const t = targets.find(x => x.id === id);
+    if (!t) return;
+    t.name = document.getElementById('editName').value.trim();
+    t.address = document.getElementById('editAddress').value.trim();
+    t.status = document.getElementById('editStatus').value;
+    await saveTargets();
+    renderAll();
+    showToast('저장했어요');
+    map.closePopup();
+  });
+  if (delBtn) delBtn.addEventListener('click', async () => {
+    targets = targets.filter(x => x.id !== id);
+    await saveTargets();
+    renderAll();
+    showToast('삭제했어요');
+    map.closePopup();
+  });
+}
+
+// ---- Excel upload & geocoding ----
+let failedItems = [];
+let placementTarget = null;
+
+document.getElementById('uploadBtn').addEventListener('click', () => {
+  document.getElementById('fileInput').click();
+});
+
+document.getElementById('fileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+  const parsed = await parseExcelFile(file);
+  if (!parsed.length){
+    showToast('엑셀에서 데이터를 찾지 못했어요');
+    return;
+  }
+  const existingKeys = new Set(targets.map(t => dedupKey(t.name, t.address)));
+  const rows = parsed.filter(r => !existingKeys.has(dedupKey(r.name, r.address)));
+  const skipped = parsed.length - rows.length;
+  if (!rows.length){
+    showToast(`${skipped}개 모두 이미 등록되어 있어요`);
+    return;
+  }
+  if (skipped > 0){
+    showToast(`이미 등록된 ${skipped}개는 건너뛰고 ${rows.length}개만 처리할게요`);
+  }
+  await geocodeAndAddRows(rows);
+});
+
+function dedupKey(name, address){
+  return (name||'').trim().toLowerCase() + '|' + (address||'').trim().toLowerCase();
+}
+
+function parseExcelFile(file){
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try{
+        const data = new Uint8Array(evt.target.result);
+        const wb = XLSX.read(data, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        resolve(mapRows(json));
+      }catch(err){
+        resolve([]);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function mapRows(json){
+  if (!json.length) return [];
+  const keys = Object.keys(json[0]);
+  const findKey = (candidates) => keys.find(k => candidates.some(c => k.toString().toLowerCase().includes(c)));
+  const nameKey = findKey(['상호', '업체', '이름', 'name']);
+  const addrKey = findKey(['주소', 'address', '소재지']);
+  const statusKey = findKey(['상태', 'status']);
+
+  return json.map(row => {
+    const rawStatus = statusKey ? String(row[statusKey] || '').trim() : '';
+    let status = 'none';
+    const found = Object.keys(STATUS).find(k => rawStatus && STATUS[k].label.includes(rawStatus.slice(0,2)));
+    if (found) status = found;
+    return {
+      name: nameKey ? String(row[nameKey] || '').trim() : '',
+      address: addrKey ? String(row[addrKey] || '').trim() : '',
+      status
+    };
+  }).filter(r => r.address);
+}
+
+let firstApiError = null;
+
+async function kakaoAddressSearch(query){
+  return kakaoProxySearch('address', query);
+}
+
+async function kakaoKeywordSearch(query){
+  return kakaoProxySearch('keyword', query);
+}
+
+async function kakaoProxySearch(type, query){
+  try{
+    const url = `${STORAGE_URL}?action=geocode&type=${type}&q=${encodeURIComponent(query)}`;
+    const res = await fetch(url);
+    if (!res.ok){
+      if (!firstApiError){
+        const bodyText = await res.text();
+        firstApiError = `HTTP ${res.status} ${res.statusText} — ${bodyText}`;
+      }
+      return null;
+    }
+    const data = await res.json();
+    if (data && typeof data.lat === 'number' && typeof data.lng === 'number'){
+      return { lat: data.lat, lng: data.lng };
+    }
+    if (data && data.error && data.error !== 'not_found' && !firstApiError){
+      firstApiError = `구글시트 프록시 오류 — ${data.error}`;
+    }
+  }catch(e){
+    if (!firstApiError) firstApiError = `네트워크 오류 — ${e.message}`;
+  }
+  return null;
+}
+
+async function geocodeAddress(address, name){
+  let result = await kakaoAddressSearch(address);
+  if (result) return result;
+  if (name){
+    result = await kakaoKeywordSearch(`${name} ${address}`);
+    if (result) return result;
+  }
+  result = await kakaoKeywordSearch(address);
+  return result;
+}
+
+function setProgress(current, total, success, failed){
+  const overlay = document.getElementById('progressOverlay');
+  overlay.classList.add('show');
+  document.getElementById('progressFill').style.width = (total ? (current/total*100) : 0) + '%';
+  document.getElementById('progressLabel').textContent = `${current} / ${total} 완료 (성공 ${success} · 실패 ${failed})`;
+}
+
+let uploadInProgress = false;
+window.addEventListener('beforeunload', (e) => {
+  if (uploadInProgress){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+async function geocodeAndAddRows(rows){
+  uploadInProgress = true;
+  let success = 0;
+  let failed = 0;
+  let processed = 0;
+  let aborted = false;
+  const CONCURRENCY = 5;
+  const SAVE_EVERY = 200;
+  const ABORT_CHECK_AT = 20;
+  let queueIndex = 0;
+
+  setProgress(0, rows.length, 0, 0);
+
+  async function worker(){
+    while (queueIndex < rows.length && !aborted){
+      const myIndex = queueIndex++;
+      const row = rows[myIndex];
+      const coords = await geocodeAddress(row.address, row.name);
+      if (coords){
+        targets.push({
+          id: 't_' + Date.now() + '_' + Math.floor(Math.random()*100000) + '_' + myIndex,
+          name: row.name || '이름 없음',
+          address: row.address,
+          status: row.status,
+          lat: coords.lat, lng: coords.lng
+        });
+        success++;
+      } else {
+        failedItems.push(row);
+        failed++;
+      }
+      processed++;
+      setProgress(processed, rows.length, success, failed);
+      if (processed >= ABORT_CHECK_AT && success === 0){
+        aborted = true;
+      }
+      if (processed % SAVE_EVERY === 0){
+        await saveTargets();
+      }
+    }
+  }
+
+  const workers = [];
+  for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
+  await Promise.all(workers);
+
+  document.getElementById('progressOverlay').classList.remove('show');
+  await saveTargets();
+  renderAll();
+  renderFailedPanel();
+  uploadInProgress = false;
+  if (success === 0 && failed > 0 && firstApiError){
+    alert('주소 검색이 전부 실패했어요. 원인:\n\n' + firstApiError);
+  } else if (failedItems.length){
+    showToast(`${success}개 자동 배치, ${failedItems.length}개는 주소를 찾지 못했어요`);
+  } else {
+    showToast(`${success}개 타겟을 지도에 등록했어요`);
+  }
+}
+
+function renderFailedPanel(){
+  const panel = document.getElementById('failedPanel');
+  if (!failedItems.length){
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+  panel.style.display = 'block';
+  panel.innerHTML = `<h3>주소를 찾지 못한 항목 (${failedItems.length})</h3>` +
+    failedItems.map((item, idx) => `
+      <div class="fitem" data-idx="${idx}">
+        <div class="fname">${escapeHtml(item.name || '이름 없음')}</div>
+        <div class="faddr">${escapeHtml(item.address)}</div>
+        <button class="place-btn" data-idx="${idx}">지도에서 직접 찍기</button>
+      </div>
+    `).join('');
+  panel.querySelectorAll('.place-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      placementTarget = failedItems[parseInt(btn.dataset.idx, 10)];
+      document.getElementById('placeHint').classList.add('show');
+      document.getElementById('hint').style.display = 'none';
+      map.getContainer().style.cursor = 'crosshair';
+    });
+  });
+}
+
+map.on('click', (e) => {
+  if (placementTarget){
+    targets.push({
+      id: 't_' + Date.now() + '_' + Math.floor(Math.random()*10000),
+      name: placementTarget.name || '이름 없음',
+      address: placementTarget.address,
+      status: placementTarget.status,
+      lat: e.latlng.lat, lng: e.latlng.lng
+    });
+    failedItems = failedItems.filter(f => f !== placementTarget);
+    placementTarget = null;
+    document.getElementById('placeHint').classList.remove('show');
+    document.getElementById('hint').style.display = '';
+    map.getContainer().style.cursor = '';
+    saveTargets();
+    renderAll();
+    renderFailedPanel();
+    showToast('위치를 지정했어요');
+    return;
+  }
+  if (tempMarker) { map.removeLayer(tempMarker); }
+  tempMarker = L.marker(e.latlng, { icon: pinIcon('none', true) }).addTo(map);
+  tempMarker.bindPopup(addFormHtml(e.latlng), { closeButton: true }).openPopup();
+
+  setTimeout(() => {
+    const cancelBtn = document.getElementById('cancelAdd');
+    const confirmBtn = document.getElementById('confirmAdd');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => {
+      map.closePopup();
+    });
+    if (confirmBtn) confirmBtn.addEventListener('click', async () => {
+      const name = document.getElementById('newName').value.trim();
+      const address = document.getElementById('newAddress').value.trim();
+      const status = document.getElementById('newStatus').value;
+      const newTarget = {
+        id: 't_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+        name: name || '이름 없음',
+        address, status,
+        lat: e.latlng.lat, lng: e.latlng.lng
+      };
+      targets.push(newTarget);
+      await saveTargets();
+      renderAll();
+      showToast('타겟을 등록했어요');
+      map.closePopup();
+    });
+  }, 0);
+});
+
+map.on('popupclose', () => {
+  if (tempMarker){ map.removeLayer(tempMarker); tempMarker = null; }
+});
+
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  searchTerm = e.target.value;
+  renderList();
+  renderMarkers();
+});
+
+// Refresh from shared storage periodically so teammates' updates show up
+setInterval(loadTargets, 15000);
+window.addEventListener('focus', loadTargets);
+
+loadTargets();
+</script>
+</body>
+</html>
